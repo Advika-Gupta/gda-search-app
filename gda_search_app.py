@@ -1,4 +1,4 @@
-# gda_search_app.py (upgraded)
+# gda_search_app.py (upgraded with full view + raw keyword search)
 
 import streamlit as st
 import os
@@ -16,43 +16,59 @@ def load_documents():
                 docs[filename] = f.read()
     return docs
 
-# Break text into sentences (basic Hindi + English handling)
-def split_sentences(text):
-    import re
-    return [s.strip() for s in re.split(r'[\n।.!?]', text) if len(s.strip()) > 10]
+# Split text into paragraphs instead of just sentences
+def split_paragraphs(text):
+    return [p.strip() for p in text.split("\n\n") if len(p.strip()) > 20]
 
-# Perform TF-IDF based search
-def search_documents(query, documents, top_k=5):
+# TF-IDF based search
+
+def search_documents_tfidf(query, documents, top_k=5):
     results = []
     for filename, text in documents.items():
-        sentences = split_sentences(text)
-        vectorizer = TfidfVectorizer().fit(sentences + [query])
-        vectors = vectorizer.transform(sentences + [query])
+        paragraphs = split_paragraphs(text)
+        vectorizer = TfidfVectorizer().fit(paragraphs + [query])
+        vectors = vectorizer.transform(paragraphs + [query])
         sim = cosine_similarity(vectors[-1], vectors[:-1]).flatten()
 
         top_indices = sim.argsort()[-top_k:][::-1]
-        top_sentences = [(sentences[i], sim[i]) for i in top_indices if sim[i] > 0]
-        results.append((filename, top_sentences))
+        top_paragraphs = [(paragraphs[i], sim[i]) for i in top_indices if sim[i] > 0]
+        results.append((filename, top_paragraphs))
+    return results
+
+# Raw keyword match search
+
+def search_documents_keyword(query, documents):
+    results = []
+    for filename, text in documents.items():
+        paragraphs = split_paragraphs(text)
+        matches = [(p, 1.0) for p in paragraphs if query.lower() in p.lower()]
+        results.append((filename, matches))
     return results
 
 # Streamlit UI
 st.title("🔎 GDA Document Search (Hindi + English)")
-st.markdown("Search across board meeting documents using any keyword or phrase.")
+st.markdown("Search across board meeting documents using keyword or phrase.")
 
 query = st.text_input("Enter your query (in Hindi or English):", max_chars=200)
-show_all = st.checkbox("Show all matching sentences (not just top 5)")
+method = st.radio("Search Method:", ["🔬 Ranked (TF-IDF)", "🔤 Keyword Match (Full)"])
 
 if query:
     with st.spinner("Searching documents..."):
         docs = load_documents()
-        result = search_documents(query, docs, top_k=999 if show_all else 5)
+        if method == "🔬 Ranked (TF-IDF)":
+            results = search_documents_tfidf(query, docs, top_k=10)
+        else:
+            results = search_documents_keyword(query, docs)
 
-    for filename, matches in result:
+    for filename, matches in results:
         if matches:
             st.subheader(f"📄 {filename}")
-            for sent, score in matches:
-                st.markdown(f"- {sent}  ")
+            for para, score in matches:
+                highlighted = para.replace(query, f"**{query}**")
+                st.markdown(f"- {highlighted}")
 
-    if all(len(m) == 0 for _, m in result):
+            with st.expander("📝 View Full Document"):
+                st.markdown(docs[filename])
+
+    if all(len(m) == 0 for _, m in results):
         st.info("No results found. Try a different term or spelling.")
-
